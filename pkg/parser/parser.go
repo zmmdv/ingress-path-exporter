@@ -22,16 +22,16 @@ var (
     requestCounter = prometheus.NewCounterVec(
         prometheus.CounterOpts{
             Name: "nginx_ingress_requests_total",
-            Help: "Total number of HTTP requests by method and status code",
+            Help: "Number of HTTP requests",
         },
-        []string{"method", "status", "path"},
+        []string{"method", "status", "path", "source_ip"},
     )
 
     requestDuration = prometheus.NewHistogramVec(
         prometheus.HistogramOpts{
             Name:    "nginx_ingress_request_duration_seconds",
-            Help:    "Request duration distribution by method and status",
-            Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+            Help:    "Request duration in seconds",
+            Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
         },
         []string{"method", "status", "path"},
     )
@@ -39,8 +39,8 @@ var (
     backendLatency = prometheus.NewHistogramVec(
         prometheus.HistogramOpts{
             Name:    "nginx_ingress_backend_latency_seconds",
-            Help:    "Backend service latency distribution",
-            Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+            Help:    "Backend latency in seconds",
+            Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
         },
         []string{"backend_service"},
     )
@@ -48,7 +48,7 @@ var (
     statusCodeCounter = prometheus.NewCounterVec(
         prometheus.CounterOpts{
             Name: "nginx_ingress_status_codes_total",
-            Help: "Count of HTTP status codes",
+            Help: "Number of requests by HTTP status code",
         },
         []string{"status", "method"},
     )
@@ -56,7 +56,7 @@ var (
     methodCounter = prometheus.NewCounterVec(
         prometheus.CounterOpts{
             Name: "nginx_ingress_http_methods_total",
-            Help: "Count of HTTP methods",
+            Help: "Number of requests by HTTP method",
         },
         []string{"method"},
     )
@@ -128,6 +128,7 @@ func (p *LogParser) ParseLine(line string) {
     method := groups["method"]
     status := groups["status"]
     path := groups["path"]
+    sourceIP := groups["ip"]  // Get source IP from log
     backend := groups["backend"]
 
     // Clean path by removing query parameters
@@ -135,8 +136,8 @@ func (p *LogParser) ParseLine(line string) {
         path = path[:idx]
     }
 
-    // Update metrics
-    requestCounter.WithLabelValues(method, status, path).Inc()
+    // Update metrics with source IP
+    requestCounter.WithLabelValues(method, status, path, sourceIP).Inc()
     methodCounter.WithLabelValues(method).Inc()
     statusCodeCounter.WithLabelValues(status, method).Inc()
 

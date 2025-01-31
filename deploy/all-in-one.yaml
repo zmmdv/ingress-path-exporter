@@ -95,7 +95,7 @@ metadata:
   name: nginx-log-exporter
   namespace: monitoring
   labels:
-    release: prometheus
+    release: monitoring-prometheus
 spec:
   selector:
     matchLabels:
