@@ -78,12 +78,12 @@ type LogParser struct {
 }
 
 type LogCollector struct {
-    client     *kubernetes.Clientset
-    parser     *LogParser
-    namespace  string
-    podLabel   string
-    stopChan   chan struct{}
-    wg         sync.WaitGroup
+    client         *kubernetes.Clientset
+    parser         *LogParser
+    namespace      string
+    podLabels      []string
+    stopChan       chan struct{}
+    wg             sync.WaitGroup
 }
 
 func NewLogParser(sampleRate int) (*LogParser, error) {
@@ -103,13 +103,13 @@ func NewK8sClient() (*kubernetes.Clientset, error) {
     return kubernetes.NewForConfig(config)
 }
 
-func NewLogCollector(client *kubernetes.Clientset, parser *LogParser, namespace, podLabel string) *LogCollector {
+func NewLogCollector(client *kubernetes.Clientset, parser *LogParser, namespace string, podLabels []string) *LogCollector {
     return &LogCollector{
-        client:    client,
-        parser:    parser,
-        namespace: namespace,
-        podLabel:  podLabel,
-        stopChan:  make(chan struct{}),
+        client:     client,
+        parser:     parser,
+        namespace:  namespace,
+        podLabels:  podLabels,
+        stopChan:   make(chan struct{}),
     }
 }
 
@@ -172,20 +172,23 @@ func (c *LogCollector) Stop() {
 }
 
 func (c *LogCollector) collectLogs() {
-    pods, err := c.client.CoreV1().Pods(c.namespace).List(context.TODO(), metav1.ListOptions{
-        LabelSelector: c.podLabel,
-    })
-    if err != nil {
-        log.Printf("Error listing pods: %v", err)
-        return
-    }
+    for _, labelSelector := range c.podLabels {
+        pods, err := c.client.CoreV1().Pods(c.namespace).List(context.TODO(), metav1.ListOptions{
+            LabelSelector: labelSelector,
+        })
+        if err != nil {
+            log.Printf("Error listing pods for selector %s: %v", labelSelector, err)
+            continue
+        }
 
-    for _, pod := range pods.Items {
-        c.wg.Add(1)
-        go func(podName string) {
-            defer c.wg.Done()
-            c.processPodLogs(podName)
-        }(pod.Name)
+        for _, pod := range pods.Items {
+            c.wg.Add(1)
+            go func(podName, selector string) {
+                defer c.wg.Done()
+                c.processPodLogs(podName)
+                log.Printf("Started collecting logs from pod %s (selector: %s)", podName, selector)
+            }(pod.Name, labelSelector)
+        }
     }
 }
 

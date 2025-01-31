@@ -49,7 +49,7 @@ spec:
         image: ghcr.io/zmmdv/ingress-path-exporter:latest
         args:
         - "--namespace=ingress-nginx"
-        - "--pod-label=app.kubernetes.io/name=ingress-nginx"
+        - "--pod-labels=app.kubernetes.io/name=ingress-nginx,app.kubernetes.io/name: ingress-nginx-internal"
         - "--listen-address=:9113"
         ports:
         - containerPort: 9113
@@ -61,6 +61,18 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: metrics
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: metrics
+          initialDelaySeconds: 5
+          periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
@@ -77,15 +89,17 @@ spec:
   selector:
     app: nginx-log-exporter
 ---
-# apiVersion: monitoring.coreos.com/v1
-# kind: ServiceMonitor
-# metadata:
-#   name: nginx-log-exporter
-#   namespace: monitoring
-# spec:
-#   selector:
-#     matchLabels:
-#       app: nginx-log-exporter
-#   endpoints:
-#   - port: metrics
-#     interval: 30s
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nginx-log-exporter
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: nginx-log-exporter
+  endpoints:
+  - port: metrics
+    interval: 30s
