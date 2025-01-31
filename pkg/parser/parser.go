@@ -73,8 +73,6 @@ func init() {
 
 type LogParser struct {
     pattern    *regexp.Regexp
-    sampleRate int
-    lineCount  int
 }
 
 type LogCollector struct {
@@ -86,13 +84,12 @@ type LogCollector struct {
     wg             sync.WaitGroup
 }
 
-func NewLogParser(sampleRate int) (*LogParser, error) {
+func NewLogParser() *LogParser {
     pattern := `^(?P<ip>\S+) - \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>[^\"]+)" (?P<status>\d+) (?P<response_size>\d+) "(?P<referrer>[^\"]*)" "(?P<user_agent>[^\"]*)" (?P<request_size>\d+) (?P<request_time>\d+\.\d+) \[(?P<backend>[^\]]+)\]`
     
     return &LogParser{
-        pattern:    regexp.MustCompile(pattern),
-        sampleRate: sampleRate,
-    }, nil
+        pattern: regexp.MustCompile(pattern),
+    }
 }
 
 func NewK8sClient() (*kubernetes.Clientset, error) {

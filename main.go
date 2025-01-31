@@ -18,6 +18,7 @@ func main() {
     namespace := flag.String("namespace", "default", "Kubernetes namespace for nginx ingress")
     podLabels := flag.String("pod-labels", "app=nginx-ingress", "Comma-separated list of label selectors for nginx pods (e.g., 'app=nginx-1,app=nginx-2')")
     listenAddr := flag.String("listen-address", ":9113", "Address to listen on for metrics")
+    sampleRate := flag.Int("sample-rate", 1, "Sample rate for log processing (1 = process all lines)")
     flag.Parse()
 
     // Split pod labels into slice
@@ -27,9 +28,9 @@ func main() {
     }
 
     // Create log parser
-    logParser, err := parser.NewLogParser()
-    if err != nil {
-        log.Fatalf("Error creating log parser: %v", err)
+    logParser := parser.NewLogParser()
+    if logParser == nil {
+        log.Fatal("Failed to create log parser")
     }
 
     // Create Kubernetes client
