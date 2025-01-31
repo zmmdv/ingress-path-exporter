@@ -32,6 +32,7 @@ func main() {
     if logParser == nil {
         log.Fatal("Failed to create log parser")
     }
+    logParser.SetSampleRate(*sampleRate)
 
     // Create Kubernetes client
     k8sClient, err := parser.NewK8sClient()

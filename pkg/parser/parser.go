@@ -71,8 +71,11 @@ func init() {
     prometheus.MustRegister(methodCounter)
 }
 
+// LogParser represents the structure for parsing Nginx log lines
 type LogParser struct {
     pattern    *regexp.Regexp
+    lineCount  int
+    sampleRate int
 }
 
 type LogCollector struct {
@@ -84,32 +87,26 @@ type LogCollector struct {
     wg             sync.WaitGroup
 }
 
+// NewLogParser creates a new LogParser instance
 func NewLogParser() *LogParser {
     pattern := `^(?P<ip>\S+) - \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>[^\"]+)" (?P<status>\d+) (?P<response_size>\d+) "(?P<referrer>[^\"]*)" "(?P<user_agent>[^\"]*)" (?P<request_size>\d+) (?P<request_time>\d+\.\d+) \[(?P<backend>[^\]]+)\]`
     
     return &LogParser{
-        pattern: regexp.MustCompile(pattern),
+        pattern:    regexp.MustCompile(pattern),
+        lineCount:  0,
+        sampleRate: 1, // Default to processing every line
     }
 }
 
-func NewK8sClient() (*kubernetes.Clientset, error) {
-    config, err := rest.InClusterConfig()
-    if err != nil {
-        return nil, err
+// SetSampleRate sets the sampling rate for log processing
+func (p *LogParser) SetSampleRate(rate int) {
+    if rate < 1 {
+        rate = 1
     }
-    return kubernetes.NewForConfig(config)
+    p.sampleRate = rate
 }
 
-func NewLogCollector(client *kubernetes.Clientset, parser *LogParser, namespace string, podLabels []string) *LogCollector {
-    return &LogCollector{
-        client:     client,
-        parser:     parser,
-        namespace:  namespace,
-        podLabels:  podLabels,
-        stopChan:   make(chan struct{}),
-    }
-}
-
+// ParseLine parses a single log line and updates metrics
 func (p *LogParser) ParseLine(line string) {
     p.lineCount++
     if p.sampleRate > 1 && p.lineCount%p.sampleRate != 0 {
@@ -146,6 +143,24 @@ func (p *LogParser) ParseLine(line string) {
     if duration, err := strconv.ParseFloat(groups["request_time"], 64); err == nil {
         requestDuration.WithLabelValues(method, status, path).Observe(duration)
         backendLatency.WithLabelValues(backend).Observe(duration)
+    }
+}
+
+func NewK8sClient() (*kubernetes.Clientset, error) {
+    config, err := rest.InClusterConfig()
+    if err != nil {
+        return nil, err
+    }
+    return kubernetes.NewForConfig(config)
+}
+
+func NewLogCollector(client *kubernetes.Clientset, parser *LogParser, namespace string, podLabels []string) *LogCollector {
+    return &LogCollector{
+        client:     client,
+        parser:     parser,
+        namespace:  namespace,
+        podLabels:  podLabels,
+        stopChan:   make(chan struct{}),
     }
 }
 
