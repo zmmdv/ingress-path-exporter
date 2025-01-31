@@ -8,7 +8,7 @@ import (
     "os/signal"
     "syscall"
 
-    "github.com/yourusername/nginx-log-exporter/pkg/parser"
+    "nginx-log-exporter/pkg/parser"
     "github.com/prometheus/client_golang/prometheus/promhttp"
 )
 

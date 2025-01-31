@@ -1,4 +1,4 @@
-# Use buildx syntax
+# Build stage
 FROM --platform=$BUILDPLATFORM golang:1.21-alpine AS builder
 
 ARG TARGETPLATFORM
@@ -12,16 +12,19 @@ WORKDIR /app
 COPY go.mod ./
 
 # Download dependencies
-RUN go mod download
+RUN go mod download && go mod verify
 
 # Copy source code
 COPY . .
+
+# Run go mod tidy to ensure go.sum is up to date
+RUN go mod tidy
 
 # Build the application with correct architecture
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /nginx-log-exporter
 
 # Final stage
-FROM --platform=$TARGETPLATFORM alpine:3.19
+FROM alpine:3.19
 
 WORKDIR /
 
