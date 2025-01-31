@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nginx-log-exporter
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nginx-log-exporter
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nginx-log-exporter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: nginx-log-exporter
+subjects:
+- kind: ServiceAccount
+  name: nginx-log-exporter
+  namespace: monitoring
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-log-exporter
+  namespace: monitoring
+  labels:
+    app: nginx-log-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-log-exporter
+  template:
+    metadata:
+      labels:
+        app: nginx-log-exporter
+    spec:
+      serviceAccountName: nginx-log-exporter
+      containers:
+      - name: exporter
+        image: ghcr.io/zmmdv/ingress-path-exporter:latest
+        args:
+        - "--namespace=ingress-nginx"
+        - "--pod-label=app.kubernetes.io/name=ingress-nginx"
+        - "--listen-address=:9113"
+        ports:
+        - containerPort: 9113
+          name: metrics
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-log-exporter
+  namespace: monitoring
+  labels:
+    app: nginx-log-exporter
+spec:
+  ports:
+  - port: 9113
+    targetPort: metrics
+    name: metrics
+  selector:
+    app: nginx-log-exporter
+---
+# apiVersion: monitoring.coreos.com/v1
+# kind: ServiceMonitor
+# metadata:
+#   name: nginx-log-exporter
+#   namespace: monitoring
+# spec:
+#   selector:
+#     matchLabels:
+#       app: nginx-log-exporter
+#   endpoints:
+#   - port: metrics
+#     interval: 30s
