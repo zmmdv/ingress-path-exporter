@@ -49,7 +49,7 @@ spec:
         image: ghcr.io/zmmdv/ingress-path-exporter:latest
         args:
         - "--namespace=ingress-nginx"
-        - "--pod-labels=app.kubernetes.io/name=ingress-nginx,app.kubernetes.io/name: ingress-nginx-internal"
+        - "--pod-labels=app.kubernetes.io/name=ingress-nginx,app.kubernetes.io/instance=ingress-nginx-internal"
         - "--listen-address=:9113"
         ports:
         - containerPort: 9113

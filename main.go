@@ -2,6 +2,7 @@ package main
 
 import (
     "flag"
+    "fmt"
     "log"
     "net/http"
     "os"
@@ -21,10 +22,17 @@ func main() {
     sampleRate := flag.Int("sample-rate", 1, "Sample rate for log processing (1 = process all lines)")
     flag.Parse()
 
-    // Split pod labels into slice
+    // Split pod labels into slice and validate format
     labelSelectors := strings.Split(*podLabels, ",")
     for i, selector := range labelSelectors {
-        labelSelectors[i] = strings.TrimSpace(selector)
+        selector = strings.TrimSpace(selector)
+        // Split into key and value
+        parts := strings.Split(selector, "=")
+        if len(parts) != 2 {
+            log.Fatalf("Invalid label selector format: %s. Must be in format 'key=value'", selector)
+        }
+        // Ensure proper format for Kubernetes label selector
+        labelSelectors[i] = fmt.Sprintf("%s=%s", strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
     }
 
     // Create log parser

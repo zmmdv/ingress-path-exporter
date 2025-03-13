@@ -143,7 +143,7 @@
               "uid": "prometheus"
             },
             "editorMode": "code",
-            "expr": "sort_desc(sum by (status, method, path) (increase(nginx_ingress_requests_total{status=~\"[45]..\"}[$__range]))) * on(status, method, path) group_right max by (status, method, path, timestamp) (nginx_ingress_requests_total{status=~\"[45]..\"})",
+            "expr": "sort_desc(sum by (status, method, path) (increase(nginx_ingress_requests_total{status=~\"[45]..\"}[$__range])))",
             "format": "table",
             "instant": true,
             "range": false,
