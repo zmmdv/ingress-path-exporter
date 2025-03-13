@@ -1,7 +1,26 @@
 {
+  "name": "ingress-path-exporter",
+  "version": "1.0.0",
+  "description": "Prometheus exporter for ingress-nginx which can give metrics based on logs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zmmdv/ingress-path-exporter.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/zmmdv/ingress-path-exporter/issues"
+  },
+  "homepage": "https://github.com/zmmdv/ingress-path-exporter#readme",
   "devDependencies": {
-    "@semantic-release/changelog": "^6.0.0",
-    "@semantic-release/git": "^10.0.0",
-    "semantic-release": "^19.0.0"
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/exec": "^6.0.3",
+    "semantic-release": "^22.0.0"
   }
 } 
