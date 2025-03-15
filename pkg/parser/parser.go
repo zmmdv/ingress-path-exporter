@@ -15,6 +15,7 @@ import (
     "k8s.io/client-go/kubernetes"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     corev1 "k8s.io/api/core/v1"
+    "k8s.io/client-go/rest"
 )
 
 var (
@@ -209,11 +210,19 @@ func (p *LogParser) ParseLine(line string) {
 }
 
 func NewK8sClient() (*kubernetes.Clientset, error) {
+    // Get in-cluster config
     config, err := rest.InClusterConfig()
     if err != nil {
         return nil, err
     }
-    return kubernetes.NewForConfig(config)
+
+    // Create clientset
+    clientset, err := kubernetes.NewForConfig(config)
+    if err != nil {
+        return nil, err
+    }
+
+    return clientset, nil
 }
 
 func NewLogCollector(client *kubernetes.Clientset, parser *LogParser, namespace string, podLabels []string) *LogCollector {
