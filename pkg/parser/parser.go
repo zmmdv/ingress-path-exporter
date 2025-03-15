@@ -84,9 +84,9 @@ func init() {
 
 // LogParser represents the structure for parsing Nginx log lines
 type LogParser struct {
-    pattern    *regexp.Regexp
-    lineCount  int
-    sampleRate int
+    accessPattern *regexp.Regexp
+    lineCount     int
+    sampleRate    int
 }
 
 type LogCollector struct {
@@ -100,19 +100,19 @@ type LogCollector struct {
 
 // NewLogParser creates a new LogParser instance
 func NewLogParser() *LogParser {
-    // Updated pattern to match exactly your log format
-    pattern := `^(?P<remote_addr>[^ ]+) ([^ ]+) ([^ ]+) \[(?P<timestamp>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>[^"]+) HTTP/[^"]+" (?P<status>\d+) (?P<bytes>\d+) "(?P<referrer>[^"]*)" "(?P<user_agent>[^"]*)".*`
-
-    regex, err := regexp.Compile(pattern)
+    // Pattern for Nginx access logs
+    accessPattern := `^(?P<remote_addr>\S+) \S+ \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>[^"]+) [^"]+" (?P<status>\d+) (?P<bytes>\d+) "(?P<referrer>[^"]*)" "(?P<user_agent>[^"]*)".*`
+    
+    regex, err := regexp.Compile(accessPattern)
     if err != nil {
         log.Printf("Error compiling regex pattern: %v", err)
         return nil
     }
 
     return &LogParser{
-        pattern:    regex,
-        lineCount:  0,
-        sampleRate: 1,
+        accessPattern: regex,
+        lineCount:    0,
+        sampleRate:   1,
     }
 }
 
@@ -128,13 +128,9 @@ func (p *LogParser) extractHostFromURL(urlStr string) string {
     if urlStr == "" || urlStr == "-" {
         return ""
     }
-
-    // Add debug logging
-    log.Printf("Extracting host from URL: %s", urlStr)
     
     parsedURL, err := url.Parse(urlStr)
     if err != nil {
-        log.Printf("Error parsing URL %s: %v", urlStr, err)
         return ""
     }
     
@@ -143,28 +139,33 @@ func (p *LogParser) extractHostFromURL(urlStr string) string {
     }
 
     // Remove any port number
-    host := strings.Split(parsedURL.Host, ":")[0]
-    log.Printf("Extracted host: %s", host)
-    return host
+    return strings.Split(parsedURL.Host, ":")[0]
 }
 
 // ParseLine parses a single log line and updates metrics
 func (p *LogParser) ParseLine(line string) {
-    // Add debug logging
-    log.Printf("Processing line: %s", line)
+    // Skip processing based on sample rate
+    p.lineCount++
+    if p.sampleRate > 1 && p.lineCount%p.sampleRate != 0 {
+        return
+    }
 
-    matches := p.pattern.FindStringSubmatch(line)
+    // Skip Kubernetes internal logs (they start with I, W, E, F)
+    if len(line) > 0 && (line[0] == 'I' || line[0] == 'W' || line[0] == 'E' || line[0] == 'F') {
+        return
+    }
+
+    matches := p.accessPattern.FindStringSubmatch(line)
     if matches == nil {
-        log.Printf("No matches found for line: %s", line)
         return
     }
 
     // Get indices
-    methodIdx := p.pattern.SubexpIndex("method")
-    pathIdx := p.pattern.SubexpIndex("path")
-    statusIdx := p.pattern.SubexpIndex("status")
-    sourceIPIdx := p.pattern.SubexpIndex("remote_addr")
-    referrerIdx := p.pattern.SubexpIndex("referrer")
+    methodIdx := p.accessPattern.SubexpIndex("method")
+    pathIdx := p.accessPattern.SubexpIndex("path")
+    statusIdx := p.accessPattern.SubexpIndex("status")
+    sourceIPIdx := p.accessPattern.SubexpIndex("remote_addr")
+    referrerIdx := p.accessPattern.SubexpIndex("referrer")
 
     // Safety check
     if methodIdx < 0 || pathIdx < 0 || statusIdx < 0 || sourceIPIdx < 0 || referrerIdx < 0 ||
@@ -198,7 +199,7 @@ func (p *LogParser) ParseLine(line string) {
     }
 
     // Debug log successful parse
-    log.Printf("Successfully parsed: method=%s, path=%s, host=%s, status=%s, sourceIP=%s",
+    log.Printf("Successfully parsed access log: method=%s, path=%s, host=%s, status=%s, sourceIP=%s",
         method, cleanPath, host, status, sourceIP)
 
     // Increment the counter
@@ -206,7 +207,7 @@ func (p *LogParser) ParseLine(line string) {
     methodCounter.WithLabelValues(method).Inc()
     statusCodeCounter.WithLabelValues(status, method).Inc()
 
-    if duration, err := strconv.ParseFloat(matches[p.pattern.SubexpIndex("request_time")], 64); err == nil {
+    if duration, err := strconv.ParseFloat(matches[p.accessPattern.SubexpIndex("request_time")], 64); err == nil {
         requestDuration.WithLabelValues(method, status, path).Observe(duration)
         backendLatency.WithLabelValues(host).Observe(duration)
     }
