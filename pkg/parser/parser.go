@@ -18,71 +18,33 @@ import (
     "k8s.io/client-go/rest"
 )
 
-var (
-    // Use once to ensure metrics are registered only once
-    metricsOnce sync.Once
-    
-    // Define metrics as package-level variables
+// MetricsCollector holds all our metrics
+type MetricsCollector struct {
     requestsTotal *prometheus.CounterVec
-
-    requestDuration = prometheus.NewHistogramVec(
-        prometheus.HistogramOpts{
-            Name:    "nginx_ingress_request_duration_seconds",
-            Help:    "Request duration in seconds",
-            Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
-        },
-        []string{"method", "status", "path"},
-    )
-
-    backendLatency = prometheus.NewHistogramVec(
-        prometheus.HistogramOpts{
-            Name:    "nginx_ingress_backend_latency_seconds",
-            Help:    "Backend latency in seconds",
-            Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
-        },
-        []string{"backend_service"},
-    )
-
-    statusCodeCounter = prometheus.NewCounterVec(
-        prometheus.CounterOpts{
-            Name: "nginx_ingress_status_codes_total",
-            Help: "Number of requests by HTTP status code",
-        },
-        []string{"status", "method"},
-    )
-
-    methodCounter = prometheus.NewCounterVec(
-        prometheus.CounterOpts{
-            Name: "nginx_ingress_http_methods_total",
-            Help: "Number of requests by HTTP method",
-        },
-        []string{"method"},
-    )
-)
-
-func initMetrics() {
-    metricsOnce.Do(func() {
-        // Initialize the metrics with all required labels
-        requestsTotal = promauto.NewCounterVec(
-            prometheus.CounterOpts{
-                Name: "nginx_ingress_requests_total",
-                Help: "Total number of HTTP requests",
-            },
-            []string{"method", "path", "host", "status", "source_ip"},
-        )
-    })
 }
 
-func init() {
-    // Initialize metrics
-    initMetrics()
+// Create a global collector instance
+var (
+    collector *MetricsCollector
+    once      sync.Once
+)
 
-    // Register metrics with Prometheus
-    prometheus.MustRegister(requestsTotal)
-    prometheus.MustRegister(requestDuration)
-    prometheus.MustRegister(backendLatency)
-    prometheus.MustRegister(statusCodeCounter)
-    prometheus.MustRegister(methodCounter)
+// NewMetricsCollector creates or returns the existing metrics collector
+func NewMetricsCollector() *MetricsCollector {
+    once.Do(func() {
+        collector = &MetricsCollector{
+            requestsTotal: prometheus.NewCounterVec(
+                prometheus.CounterOpts{
+                    Namespace: "nginx",
+                    Subsystem: "ingress",
+                    Name:      "requests_total",
+                    Help:      "Total number of HTTP requests",
+                },
+                []string{"method", "path", "host", "status", "source_ip"},
+            ),
+        }
+    })
+    return collector
 }
 
 // LogParser represents the structure for parsing Nginx log lines
@@ -90,6 +52,7 @@ type LogParser struct {
     accessPattern *regexp.Regexp
     lineCount     int
     sampleRate    int
+    metrics       *MetricsCollector
 }
 
 type LogCollector struct {
@@ -103,27 +66,11 @@ type LogCollector struct {
 
 // Initialize metrics when creating a new parser instead of init()
 func NewLogParser() *LogParser {
-    // Initialize metrics if not already initialized
-    if requestsTotal == nil {
-        requestsTotal = prometheus.NewCounterVec(
-            prometheus.CounterOpts{
-                Name: "nginx_ingress_requests_total",
-                Help: "Total number of HTTP requests",
-            },
-            []string{"method", "path", "host", "status", "source_ip"},
-        )
-        // Register metric
-        err := prometheus.Register(requestsTotal)
-        if err != nil {
-            if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
-                // If the metric is already registered, use the existing one
-                requestsTotal = are.ExistingCollector.(*prometheus.CounterVec)
-            } else {
-                log.Printf("Error registering metric: %v", err)
-                return nil
-            }
-        }
-    }
+    // Create or get the metrics collector
+    metrics := NewMetricsCollector()
+    
+    // Register metrics only if they haven't been registered
+    prometheus.DefaultRegisterer.MustRegister(metrics.requestsTotal)
 
     // Create and compile regex pattern
     accessPattern := `^(?P<remote_addr>[^ ]+) [^ ]+ [^ ]+ \[(?P<timestamp>[^\]]+)\] "(?P<method>[^ ]+) (?P<path>[^ ]+) HTTP/[^"]+" (?P<status>\d+) (?P<bytes>\d+) "(?P<referrer>[^"]*)" "(?P<user_agent>[^"]*)".*$`
@@ -138,6 +85,7 @@ func NewLogParser() *LogParser {
         accessPattern: regex,
         lineCount:    0,
         sampleRate:   1,
+        metrics:      metrics,
     }
 }
 
@@ -218,29 +166,14 @@ func (p *LogParser) ParseLine(line string) {
         host = "unknown"
     }
 
-    // Log the values we're about to use
-    log.Printf("Using values - method: %s, path: %s, host: %s, status: %s, sourceIP: %s",
-        method, cleanPath, host, status, sourceIP)
-
-    // Try-catch equivalent to prevent panic
-    defer func() {
-        if r := recover(); r != nil {
-            log.Printf("Recovered from panic in ParseLine: %v", r)
-        }
-    }()
-
-    // Increment the counter with error handling
-    if requestsTotal != nil {
-        requestsTotal.WithLabelValues(
-            method,
-            cleanPath,
-            host,
-            status,
-            sourceIP,
-        ).Inc()
-    }
-
-    log.Printf("Successfully processed log entry")
+    // Use metrics from the parser instance
+    p.metrics.requestsTotal.WithLabelValues(
+        method,
+        cleanPath,
+        host,
+        status,
+        sourceIP,
+    ).Inc()
 }
 
 func NewK8sClient() (*kubernetes.Clientset, error) {

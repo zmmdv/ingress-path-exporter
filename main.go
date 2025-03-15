@@ -35,7 +35,7 @@ func main() {
         labelSelectors[i] = fmt.Sprintf("%s=%s", strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
     }
 
-    // Create log parser
+    // Create log parser with error handling
     logParser := parser.NewLogParser()
     if logParser == nil {
         log.Fatal("Failed to create log parser")
