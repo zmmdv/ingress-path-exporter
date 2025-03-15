@@ -100,8 +100,8 @@ type LogCollector struct {
 
 // NewLogParser creates a new LogParser instance
 func NewLogParser() *LogParser {
-    // Updated pattern to better match Nginx ingress log format
-    pattern := `^(?P<remote_addr>\S+) \S+ \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>[^"]+) HTTP/[0-9.]+" (?P<status>\d+) \d+ "(?P<referrer>[^"]*)" "[^"]*" \d+ \d+\.\d+ \[[^\]]+\] \[[^\]]+\] \S+ \d+ \d+\.\d+ (?P<status2>\d+)`
+    // Updated pattern to match exactly your log format
+    pattern := `^(?P<remote_addr>[^ ]+) ([^ ]+) ([^ ]+) \[(?P<timestamp>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>[^"]+) HTTP/[^"]+" (?P<status>\d+) (?P<bytes>\d+) "(?P<referrer>[^"]*)" "(?P<user_agent>[^"]*)".*`
 
     regex, err := regexp.Compile(pattern)
     if err != nil {
@@ -128,23 +128,30 @@ func (p *LogParser) extractHostFromURL(urlStr string) string {
     if urlStr == "" || urlStr == "-" {
         return ""
     }
+
+    // Add debug logging
+    log.Printf("Extracting host from URL: %s", urlStr)
     
     parsedURL, err := url.Parse(urlStr)
     if err != nil {
+        log.Printf("Error parsing URL %s: %v", urlStr, err)
         return ""
     }
     
-    // Remove any port number and protocol
-    return strings.Split(parsedURL.Host, ":")[0]
+    if parsedURL.Host == "" {
+        return ""
+    }
+
+    // Remove any port number
+    host := strings.Split(parsedURL.Host, ":")[0]
+    log.Printf("Extracted host: %s", host)
+    return host
 }
 
 // ParseLine parses a single log line and updates metrics
 func (p *LogParser) ParseLine(line string) {
-    // Skip processing based on sample rate
-    p.lineCount++
-    if p.sampleRate > 1 && p.lineCount%p.sampleRate != 0 {
-        return
-    }
+    // Add debug logging
+    log.Printf("Processing line: %s", line)
 
     matches := p.pattern.FindStringSubmatch(line)
     if matches == nil {
@@ -152,26 +159,19 @@ func (p *LogParser) ParseLine(line string) {
         return
     }
 
-    // Safely get indices first
+    // Get indices
     methodIdx := p.pattern.SubexpIndex("method")
     pathIdx := p.pattern.SubexpIndex("path")
     statusIdx := p.pattern.SubexpIndex("status")
     sourceIPIdx := p.pattern.SubexpIndex("remote_addr")
     referrerIdx := p.pattern.SubexpIndex("referrer")
 
-    // Validate indices
-    if methodIdx < 0 || pathIdx < 0 || statusIdx < 0 || sourceIPIdx < 0 || referrerIdx < 0 {
-        log.Printf("Invalid regex capture groups. Indices: method=%d, path=%d, status=%d, sourceIP=%d, referrer=%d",
-            methodIdx, pathIdx, statusIdx, sourceIPIdx, referrerIdx)
-        return
-    }
-
-    // Safely access matches with bounds checking
-    if len(matches) <= methodIdx || len(matches) <= pathIdx || 
-       len(matches) <= statusIdx || len(matches) <= sourceIPIdx || 
-       len(matches) <= referrerIdx {
-        log.Printf("Matches array too short. Length: %d, Required indices: method=%d, path=%d, status=%d, sourceIP=%d, referrer=%d",
-            len(matches), methodIdx, pathIdx, statusIdx, sourceIPIdx, referrerIdx)
+    // Safety check
+    if methodIdx < 0 || pathIdx < 0 || statusIdx < 0 || sourceIPIdx < 0 || referrerIdx < 0 ||
+        len(matches) <= methodIdx || len(matches) <= pathIdx ||
+        len(matches) <= statusIdx || len(matches) <= sourceIPIdx ||
+        len(matches) <= referrerIdx {
+        log.Printf("Invalid match structure. Matches length: %d", len(matches))
         return
     }
 
@@ -184,7 +184,6 @@ func (p *LogParser) ParseLine(line string) {
     // Extract host from referrer
     host := p.extractHostFromURL(referrer)
     if host == "" {
-        // If no referrer, try to extract from the path if it's an absolute URL
         if strings.HasPrefix(path, "http") {
             host = p.extractHostFromURL(path)
         } else {
@@ -192,17 +191,17 @@ func (p *LogParser) ParseLine(line string) {
         }
     }
 
-    // Clean the path by removing query parameters if needed
+    // Clean the path by removing query parameters
     cleanPath := path
     if idx := strings.Index(path, "?"); idx != -1 {
         cleanPath = path[:idx]
     }
 
-    // Log successful parsing
-    log.Printf("Parsed log: method=%s, path=%s, host=%s, status=%s, sourceIP=%s",
+    // Debug log successful parse
+    log.Printf("Successfully parsed: method=%s, path=%s, host=%s, status=%s, sourceIP=%s",
         method, cleanPath, host, status, sourceIP)
 
-    // Increment the counter with the extracted host
+    // Increment the counter
     requestsTotal.WithLabelValues(method, cleanPath, host, status, sourceIP).Inc()
     methodCounter.WithLabelValues(method).Inc()
     statusCodeCounter.WithLabelValues(status, method).Inc()
