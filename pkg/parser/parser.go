@@ -9,6 +9,7 @@ import (
     "strings"
     "sync"
     "time"
+    "net/url"
 
     "github.com/prometheus/client_golang/prometheus"
     "k8s.io/client-go/kubernetes"
@@ -70,6 +71,9 @@ func init() {
     prometheus.MustRegister(backendLatency)
     prometheus.MustRegister(statusCodeCounter)
     prometheus.MustRegister(methodCounter)
+
+    // Update the pattern to capture the referrer
+    pattern := `^(?P<remote_addr>\S+) \S+ \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>[^"]*) [^"]+" (?P<status>\d+) \d+ "(?P<referrer>[^"]*)".*`
 }
 
 // LogParser represents the structure for parsing Nginx log lines
@@ -90,8 +94,6 @@ type LogCollector struct {
 
 // NewLogParser creates a new LogParser instance
 func NewLogParser() *LogParser {
-    pattern := `^(?P<ip>\S+) - \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>[^\"]+)" (?P<status>\d+) (?P<response_size>\d+) "(?P<referrer>[^\"]*)" "(?P<user_agent>[^\"]*)" (?P<request_size>\d+) (?P<request_time>\d+\.\d+) \[(?P<backend>[^\]]+)\]`
-    
     return &LogParser{
         pattern:    regexp.MustCompile(pattern),
         lineCount:  0,
@@ -107,6 +109,20 @@ func (p *LogParser) SetSampleRate(rate int) {
     p.sampleRate = rate
 }
 
+func (p *LogParser) extractHostFromURL(urlStr string) string {
+    if urlStr == "" || urlStr == "-" {
+        return ""
+    }
+    
+    parsedURL, err := url.Parse(urlStr)
+    if err != nil {
+        return ""
+    }
+    
+    // Remove any port number and protocol
+    return strings.Split(parsedURL.Host, ":")[0]
+}
+
 // ParseLine parses a single log line and updates metrics
 func (p *LogParser) ParseLine(line string) {
     p.lineCount++
@@ -119,33 +135,38 @@ func (p *LogParser) ParseLine(line string) {
         return
     }
 
-    groups := make(map[string]string)
-    for i, name := range p.pattern.SubexpNames() {
-        if i != 0 && name != "" {
-            groups[name] = matches[i]
+    // Get named groups
+    method := matches[p.pattern.SubexpIndex("method")]
+    path := matches[p.pattern.SubexpIndex("path")]
+    status := matches[p.pattern.SubexpIndex("status")]
+    sourceIP := matches[p.pattern.SubexpIndex("remote_addr")]
+    referrer := matches[p.pattern.SubexpIndex("referrer")]
+
+    // Extract host from referrer
+    host := p.extractHostFromURL(referrer)
+    if host == "" {
+        // If no referrer, try to extract from the path if it's an absolute URL
+        if strings.HasPrefix(path, "http") {
+            host = p.extractHostFromURL(path)
+        } else {
+            host = "unknown"
         }
     }
 
-    method := groups["method"]
-    status := groups["status"]
-    path := groups["path"]
-    sourceIP := groups["ip"]  // Get source IP from log
-    backend := groups["backend"]
-    host := groups["host"]
-
-    // Clean path by removing query parameters
+    // Clean the path by removing query parameters if needed
+    cleanPath := path
     if idx := strings.Index(path, "?"); idx != -1 {
-        path = path[:idx]
+        cleanPath = path[:idx]
     }
 
-    // Update metrics with source IP
-    requestsTotal.WithLabelValues(method, path, host, status, sourceIP).Inc()
+    // Increment the counter with the extracted host
+    requestsTotal.WithLabelValues(method, cleanPath, host, status, sourceIP).Inc()
     methodCounter.WithLabelValues(method).Inc()
     statusCodeCounter.WithLabelValues(status, method).Inc()
 
-    if duration, err := strconv.ParseFloat(groups["request_time"], 64); err == nil {
+    if duration, err := strconv.ParseFloat(matches[p.pattern.SubexpIndex("request_time")], 64); err == nil {
         requestDuration.WithLabelValues(method, status, path).Observe(duration)
-        backendLatency.WithLabelValues(backend).Observe(duration)
+        backendLatency.WithLabelValues(host).Observe(duration)
     }
 }
 
