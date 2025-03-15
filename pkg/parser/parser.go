@@ -100,10 +100,9 @@ type LogCollector struct {
 
 // NewLogParser creates a new LogParser instance
 func NewLogParser() *LogParser {
-    // Define the pattern here
-    pattern := `^(?P<remote_addr>\S+) \S+ \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>[^"]*) [^"]+" (?P<status>\d+) \d+ "(?P<referrer>[^"]*)".*`
-    
-    // Compile the regex pattern
+    // Updated pattern to better match Nginx ingress log format
+    pattern := `^(?P<remote_addr>\S+) \S+ \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>[^"]+) HTTP/[0-9.]+" (?P<status>\d+) \d+ "(?P<referrer>[^"]*)" "[^"]*" \d+ \d+\.\d+ \[[^\]]+\] \[[^\]]+\] \S+ \d+ \d+\.\d+ (?P<status2>\d+)`
+
     regex, err := regexp.Compile(pattern)
     if err != nil {
         log.Printf("Error compiling regex pattern: %v", err)
@@ -149,15 +148,38 @@ func (p *LogParser) ParseLine(line string) {
 
     matches := p.pattern.FindStringSubmatch(line)
     if matches == nil {
+        log.Printf("No matches found for line: %s", line)
         return
     }
 
-    // Get named groups using the compiled pattern
-    method := matches[p.pattern.SubexpIndex("method")]
-    path := matches[p.pattern.SubexpIndex("path")]
-    status := matches[p.pattern.SubexpIndex("status")]
-    sourceIP := matches[p.pattern.SubexpIndex("remote_addr")]
-    referrer := matches[p.pattern.SubexpIndex("referrer")]
+    // Safely get indices first
+    methodIdx := p.pattern.SubexpIndex("method")
+    pathIdx := p.pattern.SubexpIndex("path")
+    statusIdx := p.pattern.SubexpIndex("status")
+    sourceIPIdx := p.pattern.SubexpIndex("remote_addr")
+    referrerIdx := p.pattern.SubexpIndex("referrer")
+
+    // Validate indices
+    if methodIdx < 0 || pathIdx < 0 || statusIdx < 0 || sourceIPIdx < 0 || referrerIdx < 0 {
+        log.Printf("Invalid regex capture groups. Indices: method=%d, path=%d, status=%d, sourceIP=%d, referrer=%d",
+            methodIdx, pathIdx, statusIdx, sourceIPIdx, referrerIdx)
+        return
+    }
+
+    // Safely access matches with bounds checking
+    if len(matches) <= methodIdx || len(matches) <= pathIdx || 
+       len(matches) <= statusIdx || len(matches) <= sourceIPIdx || 
+       len(matches) <= referrerIdx {
+        log.Printf("Matches array too short. Length: %d, Required indices: method=%d, path=%d, status=%d, sourceIP=%d, referrer=%d",
+            len(matches), methodIdx, pathIdx, statusIdx, sourceIPIdx, referrerIdx)
+        return
+    }
+
+    method := matches[methodIdx]
+    path := matches[pathIdx]
+    status := matches[statusIdx]
+    sourceIP := matches[sourceIPIdx]
+    referrer := matches[referrerIdx]
 
     // Extract host from referrer
     host := p.extractHostFromURL(referrer)
@@ -175,6 +197,10 @@ func (p *LogParser) ParseLine(line string) {
     if idx := strings.Index(path, "?"); idx != -1 {
         cleanPath = path[:idx]
     }
+
+    // Log successful parsing
+    log.Printf("Parsed log: method=%s, path=%s, host=%s, status=%s, sourceIP=%s",
+        method, cleanPath, host, status, sourceIP)
 
     // Increment the counter with the extracted host
     requestsTotal.WithLabelValues(method, cleanPath, host, status, sourceIP).Inc()
