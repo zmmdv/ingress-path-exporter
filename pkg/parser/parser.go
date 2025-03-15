@@ -15,16 +15,17 @@ import (
     "k8s.io/client-go/rest"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     corev1 "k8s.io/api/core/v1"
+    promauto "github.com/prometheus/client_golang/prometheus"
 )
 
 var (
     // Metrics collectors
-    requestCounter = prometheus.NewCounterVec(
+    requestsTotal = promauto.NewCounterVec(
         prometheus.CounterOpts{
             Name: "nginx_ingress_requests_total",
-            Help: "Number of HTTP requests",
+            Help: "Total number of HTTP requests",
         },
-        []string{"method", "status", "path", "source_ip"},
+        []string{"method", "path", "host", "status", "source_ip"},
     )
 
     requestDuration = prometheus.NewHistogramVec(
@@ -64,7 +65,7 @@ var (
 
 func init() {
     // Register metrics with Prometheus
-    prometheus.MustRegister(requestCounter)
+    prometheus.MustRegister(requestsTotal)
     prometheus.MustRegister(requestDuration)
     prometheus.MustRegister(backendLatency)
     prometheus.MustRegister(statusCodeCounter)
@@ -130,6 +131,7 @@ func (p *LogParser) ParseLine(line string) {
     path := groups["path"]
     sourceIP := groups["ip"]  // Get source IP from log
     backend := groups["backend"]
+    host := groups["host"]
 
     // Clean path by removing query parameters
     if idx := strings.Index(path, "?"); idx != -1 {
@@ -137,7 +139,7 @@ func (p *LogParser) ParseLine(line string) {
     }
 
     // Update metrics with source IP
-    requestCounter.WithLabelValues(method, status, path, sourceIP).Inc()
+    requestsTotal.WithLabelValues(method, path, host, status, sourceIP).Inc()
     methodCounter.WithLabelValues(method).Inc()
     statusCodeCounter.WithLabelValues(status, method).Inc()
 
