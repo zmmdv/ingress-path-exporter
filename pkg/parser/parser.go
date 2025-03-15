@@ -101,9 +101,31 @@ type LogCollector struct {
     wg             sync.WaitGroup
 }
 
-// NewLogParser creates a new LogParser instance
+// Initialize metrics when creating a new parser instead of init()
 func NewLogParser() *LogParser {
-    // Updated pattern to match your log format exactly
+    // Initialize metrics if not already initialized
+    if requestsTotal == nil {
+        requestsTotal = prometheus.NewCounterVec(
+            prometheus.CounterOpts{
+                Name: "nginx_ingress_requests_total",
+                Help: "Total number of HTTP requests",
+            },
+            []string{"method", "path", "host", "status", "source_ip"},
+        )
+        // Register metric
+        err := prometheus.Register(requestsTotal)
+        if err != nil {
+            if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+                // If the metric is already registered, use the existing one
+                requestsTotal = are.ExistingCollector.(*prometheus.CounterVec)
+            } else {
+                log.Printf("Error registering metric: %v", err)
+                return nil
+            }
+        }
+    }
+
+    // Create and compile regex pattern
     accessPattern := `^(?P<remote_addr>[^ ]+) [^ ]+ [^ ]+ \[(?P<timestamp>[^\]]+)\] "(?P<method>[^ ]+) (?P<path>[^ ]+) HTTP/[^"]+" (?P<status>\d+) (?P<bytes>\d+) "(?P<referrer>[^"]*)" "(?P<user_agent>[^"]*)".*$`
     
     regex, err := regexp.Compile(accessPattern)
@@ -207,14 +229,16 @@ func (p *LogParser) ParseLine(line string) {
         }
     }()
 
-    // Increment the counter
-    requestsTotal.WithLabelValues(
-        method,
-        cleanPath,
-        host,
-        status,
-        sourceIP,
-    ).Inc()
+    // Increment the counter with error handling
+    if requestsTotal != nil {
+        requestsTotal.WithLabelValues(
+            method,
+            cleanPath,
+            host,
+            status,
+            sourceIP,
+        ).Inc()
+    }
 
     log.Printf("Successfully processed log entry")
 }
