@@ -5,18 +5,16 @@ import (
     "context"
     "log"
     "regexp"
-    "strconv"
     "strings"
     "sync"
     "time"
     "net/url"
 
     "github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promauto"
     "k8s.io/client-go/kubernetes"
-    "k8s.io/client-go/rest"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     corev1 "k8s.io/api/core/v1"
-    promauto "github.com/prometheus/client_golang/prometheus"
 )
 
 var (
