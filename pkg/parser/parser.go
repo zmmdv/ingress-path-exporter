@@ -11,7 +11,6 @@ import (
     "net/url"
 
     "github.com/prometheus/client_golang/prometheus"
-    "github.com/prometheus/client_golang/prometheus/promauto"
     "k8s.io/client-go/kubernetes"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     corev1 "k8s.io/api/core/v1"
