@@ -72,8 +72,14 @@ func init() {
     prometheus.MustRegister(statusCodeCounter)
     prometheus.MustRegister(methodCounter)
 
-    // Update the pattern to capture the referrer
-    pattern := `^(?P<remote_addr>\S+) \S+ \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>[^"]*) [^"]+" (?P<status>\d+) \d+ "(?P<referrer>[^"]*)".*`
+    // Move the metrics initialization here
+    requestsTotal = promauto.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "nginx_ingress_requests_total",
+            Help: "Total number of HTTP requests",
+        },
+        []string{"method", "path", "host", "status", "source_ip"},
+    )
 }
 
 // LogParser represents the structure for parsing Nginx log lines
@@ -94,10 +100,20 @@ type LogCollector struct {
 
 // NewLogParser creates a new LogParser instance
 func NewLogParser() *LogParser {
+    // Define the pattern here
+    pattern := `^(?P<remote_addr>\S+) \S+ \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>[^"]*) [^"]+" (?P<status>\d+) \d+ "(?P<referrer>[^"]*)".*`
+    
+    // Compile the regex pattern
+    regex, err := regexp.Compile(pattern)
+    if err != nil {
+        log.Printf("Error compiling regex pattern: %v", err)
+        return nil
+    }
+
     return &LogParser{
-        pattern:    regexp.MustCompile(pattern),
+        pattern:    regex,
         lineCount:  0,
-        sampleRate: 1, // Default to processing every line
+        sampleRate: 1,
     }
 }
 
@@ -125,6 +141,7 @@ func (p *LogParser) extractHostFromURL(urlStr string) string {
 
 // ParseLine parses a single log line and updates metrics
 func (p *LogParser) ParseLine(line string) {
+    // Skip processing based on sample rate
     p.lineCount++
     if p.sampleRate > 1 && p.lineCount%p.sampleRate != 0 {
         return
@@ -135,7 +152,7 @@ func (p *LogParser) ParseLine(line string) {
         return
     }
 
-    // Get named groups
+    // Get named groups using the compiled pattern
     method := matches[p.pattern.SubexpIndex("method")]
     path := matches[p.pattern.SubexpIndex("path")]
     status := matches[p.pattern.SubexpIndex("status")]
