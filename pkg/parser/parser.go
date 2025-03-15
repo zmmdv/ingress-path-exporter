@@ -19,7 +19,10 @@ import (
 )
 
 var (
-    // Metrics collectors
+    // Use once to ensure metrics are registered only once
+    metricsOnce sync.Once
+    
+    // Define metrics as package-level variables
     requestsTotal *prometheus.CounterVec
 
     requestDuration = prometheus.NewHistogramVec(
@@ -57,15 +60,22 @@ var (
     )
 )
 
+func initMetrics() {
+    metricsOnce.Do(func() {
+        // Initialize the metrics with all required labels
+        requestsTotal = promauto.NewCounterVec(
+            prometheus.CounterOpts{
+                Name: "nginx_ingress_requests_total",
+                Help: "Total number of HTTP requests",
+            },
+            []string{"method", "path", "host", "status", "source_ip"},
+        )
+    })
+}
+
 func init() {
-    // Initialize the metrics with all required labels
-    requestsTotal = promauto.NewCounterVec(
-        prometheus.CounterOpts{
-            Name: "nginx_ingress_requests_total",
-            Help: "Total number of HTTP requests",
-        },
-        []string{"method", "path", "host", "status", "source_ip"},
-    )
+    // Initialize metrics
+    initMetrics()
 
     // Register metrics with Prometheus
     prometheus.MustRegister(requestsTotal)
