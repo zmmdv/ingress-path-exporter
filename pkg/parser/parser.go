@@ -30,7 +30,7 @@ type MetricsCollector struct {
     requestsTotal *prometheus.GaugeVec
     requestCount  map[string]float64
     mutex         sync.RWMutex
-    startTime    time.Time
+    startTime     time.Time
 }
 
 // Create a global collector instance
@@ -101,37 +101,17 @@ type LogCollector struct {
 
 // Initialize metrics when creating a new parser instead of init()
 func NewLogParser() *LogParser {
+    // Create metrics collector
     metrics := NewMetricsCollector()
-    prometheus.DefaultRegisterer.MustRegister(metrics.requestsTotal)
-
-    // Pattern based on the exact nginx log format
-    pattern := `^(?P<remote_addr>[^ ]+) ` + // $remote_addr
-        `"https://(?P<host>[^"]+)" ` + // "https://$host"
-        `"OAK: [^"]+" ` + // "OAK: $sent_http_oak"
-        `"Requests status: (?P<initial_status>[^"]+)"` + // "Requests status: $status"
-        `\[(?P<time_local>[^\]]+)\] ` + // [$time_local]
-        `"(?P<method>[^ ]+) (?P<path>[^ ]+)[^"]+" ` + // "$request"
-        `(?P<remote_user>[^ ]+) ` + // $remote_user
-        `(?P<body_bytes_sent>\d+) ` + // $body_bytes_sent
-        `(?P<http_referer>[^ ]+) ` + // $http_referer
-        `(?P<http_user_agent>[^ ]+) ` + // $http_user_agent
-        `(?P<request_length>\d+) ` + // $request_length
-        `(?P<request_time>[^ ]+) ` + // $request_time
-        `\[(?P<proxy_upstream_name>[^\]]*)\] ` + // [$proxy_upstream_name]
-        `\[(?P<proxy_alternative_upstream_name>[^\]]*)\] ` + // [$proxy_alternative_upstream_name]
-        `(?P<upstream_addr>[^ ]+) ` + // $upstream_addr
-        `(?P<upstream_response_length>\d+) ` + // $upstream_response_length
-        `(?P<upstream_response_time>[^ ]+) ` + // $upstream_response_time
-        `(?P<status>\d+) ` + // $upstream_status
-        `(?P<req_id>[a-f0-9]+)$` // $req_id
-
-    regex, err := regexp.Compile(pattern)
+    
+    // Create and compile regex pattern
+    accessPattern := `^(?P<remote_addr>[^ ]+) "https://(?P<host>[^"]+)" "OAK: [^"]+" "Requests status: [^"]+"\[(?P<timestamp>[^\]]+)\] "(?P<method>[^ ]+) (?P<path>[^ ]+)[^"]+" [^ ]+ \d+ [^ ]+ [^ ]+ \d+ [^ ]+ \[[^\]]+\] \[[^\]]+\] [^ ]+ \d+ [^ ]+ (?P<status>\d+)`
+    
+    regex, err := regexp.Compile(accessPattern)
     if err != nil {
         log.Printf("Error compiling regex pattern: %v", err)
         return nil
     }
-
-    log.Printf("Compiled regex pattern: %s", pattern)
 
     return &LogParser{
         accessPattern: regex,
@@ -181,7 +161,6 @@ func (p *LogParser) ParseLine(line string) {
 
     matches := p.accessPattern.FindStringSubmatch(line)
     if matches == nil {
-        log.Printf("No matches found for line: %s", line)
         return
     }
 
@@ -195,7 +174,7 @@ func (p *LogParser) ParseLine(line string) {
         }
     }
 
-    // Extract required fields
+    // Extract and validate required fields
     method, ok1 := values["method"]
     path, ok2 := values["path"]
     status, ok3 := values["status"]
@@ -214,11 +193,6 @@ func (p *LogParser) ParseLine(line string) {
         cleanPath = path[:idx]
     }
 
-    // Clean the host (already clean as we capture without https:// prefix)
-    if host == "" {
-        host = "unknown"
-    }
-
     // Create a unique key for this request
     key := fmt.Sprintf("%s_%s_%s_%s_%s", 
         method, cleanPath, host, status, sourceIP)
@@ -229,7 +203,7 @@ func (p *LogParser) ParseLine(line string) {
     count := p.metrics.requestCount[key]
     p.metrics.mutex.Unlock()
 
-    // Set (not increment) the gauge to the current count
+    // Set the gauge to the current count
     p.metrics.requestsTotal.WithLabelValues(
         method,
         cleanPath,
