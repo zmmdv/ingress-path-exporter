@@ -10,6 +10,9 @@ import (
     "sync"
     "time"
     "net/url"
+    "os"
+    "os/signal"
+    "syscall"
 
     "github.com/prometheus/client_golang/prometheus"
     "k8s.io/client-go/kubernetes"
@@ -25,8 +28,9 @@ var (
 // MetricsCollector holds all our metrics
 type MetricsCollector struct {
     requestsTotal *prometheus.GaugeVec
-    requestCount  map[string]float64  // To track counts in memory
-    mutex         sync.RWMutex        // To make map operations thread-safe
+    requestCount  map[string]float64
+    mutex         sync.RWMutex
+    startTime    time.Time
 }
 
 // Create a global collector instance
@@ -37,6 +41,7 @@ var (
 
 // NewMetricsCollector creates or returns the existing metrics collector
 func NewMetricsCollector() *MetricsCollector {
+    // Create new collector
     collector := &MetricsCollector{
         requestsTotal: prometheus.NewGaugeVec(
             prometheus.GaugeOpts{
@@ -48,16 +53,16 @@ func NewMetricsCollector() *MetricsCollector {
             []string{"method", "path", "host", "status", "source_ip"},
         ),
         requestCount: make(map[string]float64),
+        startTime:   time.Now(),
     }
 
-    // Reset counts every hour (or adjust the duration as needed)
-    go func() {
-        for {
-            time.Sleep(1 * time.Hour)
-            collector.Reset()
-        }
-    }()
+    // Unregister any existing metrics with the same name
+    prometheus.Unregister(collector.requestsTotal)
+    
+    // Register the new metrics
+    prometheus.MustRegister(collector.requestsTotal)
 
+    log.Printf("Metrics collector initialized at: %v", collector.startTime)
     return collector
 }
 
@@ -65,11 +70,16 @@ func (mc *MetricsCollector) Reset() {
     mc.mutex.Lock()
     defer mc.mutex.Unlock()
     
-    // Clear the internal map
+    // Clear all existing metrics
+    mc.requestsTotal.Reset()
+    
+    // Reset the counter map
     mc.requestCount = make(map[string]float64)
     
-    // Reset all metrics
-    mc.requestsTotal.Reset()
+    // Update start time
+    mc.startTime = time.Now()
+    
+    log.Printf("Metrics reset at: %v", mc.startTime)
 }
 
 // LogParser represents the structure for parsing Nginx log lines
@@ -213,22 +223,22 @@ func (p *LogParser) ParseLine(line string) {
     key := fmt.Sprintf("%s_%s_%s_%s_%s", 
         method, cleanPath, host, status, sourceIP)
 
-    // Update the count in our map
     p.metrics.mutex.Lock()
+    // Increment the count
     p.metrics.requestCount[key]++
     count := p.metrics.requestCount[key]
     p.metrics.mutex.Unlock()
 
-    // Update the gauge with the current count
+    // Set (not increment) the gauge to the current count
     p.metrics.requestsTotal.WithLabelValues(
         method,
         cleanPath,
         host,
         status,
         sourceIP,
-    ).Set(count)
+    ).Set(float64(count))
 
-    log.Printf("Updated metric - method=%s, path=%s, host=%s, status=%s, sourceIP=%s, count=%.0f",
+    log.Printf("Request logged - method=%s, path=%s, host=%s, status=%s, sourceIP=%s, current_count=%.0f",
         method, cleanPath, host, status, sourceIP, count)
 }
 
@@ -319,4 +329,27 @@ func (c *LogCollector) processPodLogs(podName string) {
             c.parser.ParseLine(scanner.Text())
         }
     }
+}
+
+func main() {
+    // ... existing code ...
+
+    // Create metrics collector
+    metricsCollector := NewMetricsCollector()
+    
+    // Create log parser with the metrics collector
+    logParser := NewLogParser()
+    
+    // Reset metrics on SIGHUP
+    sigChan := make(chan os.Signal, 1)
+    signal.Notify(sigChan, syscall.SIGHUP)
+    go func() {
+        for {
+            <-sigChan
+            log.Println("Received SIGHUP, resetting metrics...")
+            metricsCollector.Reset()
+        }
+    }()
+
+    // ... rest of your main function ...
 } 
