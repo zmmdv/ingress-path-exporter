@@ -14,7 +14,7 @@ import (
 )
 
 type MetricsCollector struct {
-    requestsTotal *prometheus.GaugeVec
+    requestsTotal *prometheus.CounterVec
     requestCount  map[string]float64
     mutex         sync.RWMutex
     startTime     time.Time
@@ -28,25 +28,17 @@ type LogParser struct {
 }
 
 func NewMetricsCollector() *MetricsCollector {
-    collector := &MetricsCollector{
-        requestsTotal: prometheus.NewGaugeVec(
-            prometheus.GaugeOpts{
-                Namespace: "nginx",
-                Subsystem: "ingress",
-                Name:      "requests_total",
-                Help:      "Total number of HTTP requests since exporter start",
+    return &MetricsCollector{
+        requestsTotal: prometheus.NewCounterVec(
+            prometheus.CounterOpts{
+                Name: "nginx_http_requests_total",
+                Help: "Total number of HTTP requests by method, path, host, status, and source IP",
             },
             []string{"method", "path", "host", "status", "source_ip"},
         ),
         requestCount: make(map[string]float64),
-        startTime:   time.Now(),
+        startTime:    time.Now(),
     }
-
-    prometheus.Unregister(collector.requestsTotal)
-    prometheus.MustRegister(collector.requestsTotal)
-
-    log.Printf("Metrics collector initialized at: %v", collector.startTime)
-    return collector
 }
 
 func NewLogParser() *LogParser {
