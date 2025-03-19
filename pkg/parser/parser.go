@@ -28,7 +28,7 @@ type LogParser struct {
 }
 
 func NewMetricsCollector() *MetricsCollector {
-    return &MetricsCollector{
+    collector := &MetricsCollector{
         requestsTotal: prometheus.NewCounterVec(
             prometheus.CounterOpts{
                 Name: "nginx_http_requests_total",
@@ -37,8 +37,14 @@ func NewMetricsCollector() *MetricsCollector {
             []string{"method", "path", "host", "status", "source_ip"},
         ),
         requestCount: make(map[string]float64),
-        startTime:    time.Now(),
+        mutex:       sync.RWMutex{},
+        startTime:   time.Now(),
     }
+    
+    // Register the metrics
+    prometheus.MustRegister(collector.requestsTotal)
+    
+    return collector
 }
 
 func NewLogParser() *LogParser {
@@ -61,6 +67,8 @@ func NewLogParser() *LogParser {
 }
 
 func (p *LogParser) ParseLine(line string) {
+    log.Printf("Parsing line: %s", line) // Debug log
+    
     p.lineCount++
     if p.sampleRate > 1 && p.lineCount%p.sampleRate != 0 {
         return
@@ -72,6 +80,7 @@ func (p *LogParser) ParseLine(line string) {
 
     matches := p.accessPattern.FindStringSubmatch(line)
     if matches == nil {
+        log.Printf("Line did not match pattern: %s", line) // Debug log
         return
     }
 
@@ -101,9 +110,10 @@ func (p *LogParser) ParseLine(line string) {
         method, cleanPath, host, status, sourceIP)
 
     p.metrics.mutex.Lock()
+    defer p.metrics.mutex.Unlock()
+    
     p.metrics.requestCount[key]++
     count := p.metrics.requestCount[key]
-    p.metrics.mutex.Unlock()
 
     p.metrics.requestsTotal.WithLabelValues(
         method,
@@ -113,7 +123,7 @@ func (p *LogParser) ParseLine(line string) {
         sourceIP,
     ).Inc()
 
-    log.Printf("Request logged - method=%s, path=%s, host=%s, status=%s, sourceIP=%s, count=%.0f",
+    log.Printf("Updated metric - method=%s, path=%s, host=%s, status=%s, sourceIP=%s, count=%.0f",
         method, cleanPath, host, status, sourceIP, count)
 }
 
