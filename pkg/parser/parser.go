@@ -47,13 +47,29 @@ func NewMetricsCollector() *MetricsCollector {
     }
     
     // Register the metrics
-    prometheus.MustRegister(collector.requestsTotal)
+    err := prometheus.Register(collector.requestsTotal)
+    if err != nil {
+        log.Printf("❌ Error registering metrics: %v", err)
+        // If it's already registered, try to unregister and register again
+        if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+            prometheus.Unregister(are.ExistingCollector)
+            err = prometheus.Register(collector.requestsTotal)
+            if err != nil {
+                log.Printf("❌ Error re-registering metrics: %v", err)
+                return nil
+            }
+        } else {
+            return nil
+        }
+    }
     
+    log.Printf("✅ Metrics collector initialized successfully")
     return collector
 }
 
 func NewLogParser() *LogParser {
-    accessPattern := regexp.MustCompile(`^(\S+)\s+"([^"]+)"\s+"[^"]+"\s+"[^"]+"\[([^\]]+)\]\s+"(\w+)\s+([^"]+)\s+HTTP/[0-9.]+"\s+.*\s+(\d{3})\s+[a-f0-9]+$`)
+    // Simplified regex pattern to match your log format
+    accessPattern := regexp.MustCompile(`^(\S+)\s+"([^"]+)"\s+"[^"]+"\s+"[^"]+".*?"(\w+)\s+([^"]+)\s+HTTP/[0-9.]+"\s+.*?(\d{3})\s+[a-f0-9]+$`)
     
     return &LogParser{
         accessPattern: accessPattern,
@@ -62,46 +78,53 @@ func NewLogParser() *LogParser {
 }
 
 func (p *LogParser) ParseLine(line string) {
-    log.Printf("Processing line: %s", line)
+    log.Printf("Attempting to parse line: %s", line)
     
     matches := p.accessPattern.FindStringSubmatch(line)
     if matches == nil {
-        log.Printf("Line did not match pattern: %s", line)
+        log.Printf("❌ Line did not match pattern")
         return
     }
 
-    for i, match := range matches {
-        log.Printf("Match[%d]: %s", i, match)
+    log.Printf("✅ Found matches: %#v", matches)
+
+    // matches should contain:
+    // [0] - full match
+    // [1] - sourceIP
+    // [2] - host
+    // [3] - method
+    // [4] - path
+    // [5] - status
+
+    if len(matches) != 6 {
+        log.Printf("❌ Wrong number of matches. Expected 6, got %d", len(matches))
+        return
     }
 
     sourceIP := matches[1]
     host := strings.TrimPrefix(matches[2], "https://")
     host = strings.TrimPrefix(host, "http://")
-    method := matches[4]
-    path := matches[5]
-    status := matches[6]
+    method := matches[3]
+    path := matches[4]
+    status := matches[5]
 
+    log.Printf("📊 Parsed values: sourceIP=%s, host=%s, method=%s, path=%s, status=%s",
+        sourceIP, host, method, path, status)
+
+    // Validate status code
     statusCode, err := strconv.Atoi(status)
     if err != nil || statusCode < 100 || statusCode > 599 {
-        log.Printf("Invalid status code: %s", status)
+        log.Printf("❌ Invalid status code: %s", status)
         return
     }
-
-    timestamp := matches[3]
-    key := fmt.Sprintf("%s_%s_%s_%s_%s_%s", method, path, host, status, sourceIP, timestamp)
 
     p.metrics.mutex.Lock()
     defer p.metrics.mutex.Unlock()
 
-    if _, exists := p.metrics.requestCount[key]; exists {
-        return
-    }
-
-    p.metrics.requestCount[key] = 1
-
+    // Increment the Prometheus counter
     p.metrics.requestsTotal.WithLabelValues(method, path, host, status, sourceIP).Inc()
 
-    log.Printf("Updated metric - method=%s, path=%s, host=%s, status=%s, sourceIP=%s, count=1",
+    log.Printf("✨ Successfully updated metric - method=%s, path=%s, host=%s, status=%s, sourceIP=%s",
         method, path, host, status, sourceIP)
 }
 
@@ -209,28 +232,37 @@ func (c *LogCollector) Start() {
 }
 
 func (c *LogCollector) streamPodLogs(ctx context.Context, pod *corev1.Pod) {
-    sinceSeconds := int64(60) // Only get last minute of logs
+    log.Printf("🔄 Starting to stream logs from pod: %s", pod.Name)
+
     req := c.client.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
-        Follow:       true,
-        SinceSeconds: &sinceSeconds,
-        Timestamps:   true,
+        Follow:     true,
+        Timestamps: true,
     })
     
     stream, err := req.Stream(ctx)
     if err != nil {
-        log.Printf("Error getting log stream for pod %s: %v", pod.Name, err)
+        log.Printf("❌ Error getting log stream for pod %s: %v", pod.Name, err)
         return
     }
     defer stream.Close()
+    
+    log.Printf("✅ Successfully connected to pod %s log stream", pod.Name)
     
     scanner := bufio.NewScanner(stream)
     for scanner.Scan() {
         select {
         case <-ctx.Done():
+            log.Printf("⏹️ Stopping log stream for pod %s", pod.Name)
             return
         default:
-            c.parser.ParseLine(scanner.Text())
+            line := scanner.Text()
+            log.Printf("📝 Received log line from pod %s: %s", pod.Name, line)
+            c.parser.ParseLine(line)
         }
+    }
+    
+    if err := scanner.Err(); err != nil {
+        log.Printf("❌ Error reading log stream for pod %s: %v", pod.Name, err)
     }
 }
 
