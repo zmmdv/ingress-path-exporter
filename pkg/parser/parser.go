@@ -3,6 +3,7 @@ package parser
 import (
     "bufio"
     "context"
+    "fmt"
     "log"
     "regexp"
     "strings"
@@ -23,7 +24,9 @@ var (
 
 // MetricsCollector holds all our metrics
 type MetricsCollector struct {
-    requestsTotal *prometheus.CounterVec
+    requestsTotal *prometheus.GaugeVec
+    requestCount  map[string]float64  // To track counts in memory
+    mutex         sync.RWMutex        // To make map operations thread-safe
 }
 
 // Create a global collector instance
@@ -34,20 +37,39 @@ var (
 
 // NewMetricsCollector creates or returns the existing metrics collector
 func NewMetricsCollector() *MetricsCollector {
-    once.Do(func() {
-        collector = &MetricsCollector{
-            requestsTotal: prometheus.NewCounterVec(
-                prometheus.CounterOpts{
-                    Namespace: "nginx",
-                    Subsystem: "ingress",
-                    Name:      "requests_total",
-                    Help:      "Total number of HTTP requests",
-                },
-                []string{"method", "path", "host", "status", "source_ip", "start_time"},
-            ),
+    collector := &MetricsCollector{
+        requestsTotal: prometheus.NewGaugeVec(
+            prometheus.GaugeOpts{
+                Namespace: "nginx",
+                Subsystem: "ingress",
+                Name:      "requests_total",
+                Help:      "Total number of HTTP requests since exporter start",
+            },
+            []string{"method", "path", "host", "status", "source_ip"},
+        ),
+        requestCount: make(map[string]float64),
+    }
+
+    // Reset counts every hour (or adjust the duration as needed)
+    go func() {
+        for {
+            time.Sleep(1 * time.Hour)
+            collector.Reset()
         }
-    })
+    }()
+
     return collector
+}
+
+func (mc *MetricsCollector) Reset() {
+    mc.mutex.Lock()
+    defer mc.mutex.Unlock()
+    
+    // Clear the internal map
+    mc.requestCount = make(map[string]float64)
+    
+    // Reset all metrics
+    mc.requestsTotal.Reset()
 }
 
 // LogParser represents the structure for parsing Nginx log lines
@@ -187,20 +209,27 @@ func (p *LogParser) ParseLine(line string) {
         host = "unknown"
     }
 
-    // Add detailed metrics logging
-    log.Printf("Recording metric - method=%s, path=%s, host=%s, status=%s, sourceIP=%s, upstream=%s, requestTime=%s",
-        method, cleanPath, host, status, sourceIP, 
-        values["proxy_upstream_name"], values["request_time"])
+    // Create a unique key for this request
+    key := fmt.Sprintf("%s_%s_%s_%s_%s", 
+        method, cleanPath, host, status, sourceIP)
 
-    // Include start_time in the labels
+    // Update the count in our map
+    p.metrics.mutex.Lock()
+    p.metrics.requestCount[key]++
+    count := p.metrics.requestCount[key]
+    p.metrics.mutex.Unlock()
+
+    // Update the gauge with the current count
     p.metrics.requestsTotal.WithLabelValues(
         method,
         cleanPath,
         host,
         status,
         sourceIP,
-        startTime,
-    ).Inc()
+    ).Set(count)
+
+    log.Printf("Updated metric - method=%s, path=%s, host=%s, status=%s, sourceIP=%s, count=%.0f",
+        method, cleanPath, host, status, sourceIP, count)
 }
 
 func NewK8sClient() (*kubernetes.Clientset, error) {
