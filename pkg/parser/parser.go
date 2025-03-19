@@ -11,8 +11,8 @@ import (
     "time"
 
     "github.com/prometheus/client_golang/prometheus"
-    "k8s.io/api/core/v1"
-    "k8s.io/apimachinery/pkg/api/meta"
+    corev1 "k8s.io/api/core/v1"
+    metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/client-go/kubernetes"
     "k8s.io/client-go/rest"
 )
@@ -168,7 +168,7 @@ func NewLogCollector(client *kubernetes.Clientset, parser *LogParser, namespace 
 }
 
 func (c *LogCollector) Start() {
-    log.Printf("Starting log collector for namespace: %s", c.namespace) // Debug log
+    log.Printf("Starting log collector for namespace: %s", c.namespace)
     
     for {
         select {
@@ -185,13 +185,12 @@ func (c *LogCollector) Start() {
                 continue
             }
             
-            log.Printf("Found %d pods matching selectors", len(pods.Items)) // Debug log
+            log.Printf("Found %d pods matching selectors", len(pods.Items))
             
             for _, pod := range pods.Items {
                 go c.streamPodLogs(&pod)
             }
             
-            // Wait before checking for new pods
             time.Sleep(30 * time.Second)
         }
     }
@@ -209,7 +208,7 @@ func (c *LogCollector) streamPodLogs(pod *corev1.Pod) {
     }
     defer stream.Close()
     
-    log.Printf("Started streaming logs from pod: %s", pod.Name) // Debug log
+    log.Printf("Started streaming logs from pod: %s", pod.Name)
     
     scanner := bufio.NewScanner(stream)
     for scanner.Scan() {
