@@ -3,7 +3,6 @@ package parser
 import (
     "fmt"
     "log"
-    "net/url"
     "regexp"
     "strings"
     "sync"
@@ -70,6 +69,7 @@ func NewLogParser() *LogParser {
 }
 
 func (p *LogParser) ParseLine(line string) {
+    p.lineCount++
     if p.sampleRate > 1 && p.lineCount%p.sampleRate != 0 {
         return
     }
