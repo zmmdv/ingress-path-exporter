@@ -17,6 +17,10 @@ import (
     "k8s.io/client-go/rest"
 )
 
+var (
+    startTime = time.Now().Format(time.RFC3339)
+)
+
 // MetricsCollector holds all our metrics
 type MetricsCollector struct {
     requestsTotal *prometheus.CounterVec
@@ -39,7 +43,7 @@ func NewMetricsCollector() *MetricsCollector {
                     Name:      "requests_total",
                     Help:      "Total number of HTTP requests",
                 },
-                []string{"method", "path", "host", "status", "source_ip"},
+                []string{"method", "path", "host", "status", "source_ip", "start_time"},
             ),
         }
     })
@@ -188,13 +192,14 @@ func (p *LogParser) ParseLine(line string) {
         method, cleanPath, host, status, sourceIP, 
         values["proxy_upstream_name"], values["request_time"])
 
-    // Increment the counter
+    // Include start_time in the labels
     p.metrics.requestsTotal.WithLabelValues(
         method,
         cleanPath,
         host,
         status,
         sourceIP,
+        startTime,
     ).Inc()
 }
 
