@@ -111,7 +111,7 @@ func (p *LogParser) ParseLine(line string) {
         host,
         status,
         sourceIP,
-    ).Set(float64(count))
+    ).Inc()
 
     log.Printf("Request logged - method=%s, path=%s, host=%s, status=%s, sourceIP=%s, count=%.0f",
         method, cleanPath, host, status, sourceIP, count)
