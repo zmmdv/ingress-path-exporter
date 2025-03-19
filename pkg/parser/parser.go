@@ -52,83 +52,50 @@ func NewMetricsCollector() *MetricsCollector {
 }
 
 func NewLogParser() *LogParser {
-    metrics := NewMetricsCollector()
+    accessPattern := regexp.MustCompile(`^(\S+)\s+"([^"]+)"\s+"[^"]+"\s+"[^"]+"\[([^\]]+)\]\s+"(\w+)\s+([^"]+)\s+HTTP/[0-9.]+"\s+.*?\s+(\d{3})\s+.*$`)
     
-    accessPattern := `^(?P<remote_addr>[^ ]+) "https://(?P<host>[^"]+)" "OAK: [^"]+" "Requests status: [^"]+"\[(?P<timestamp>[^\]]+)\] "(?P<method>[^ ]+) (?P<path>[^ ]+)[^"]+" [^ ]+ \d+ [^ ]+ [^ ]+ \d+ [^ ]+ \[[^\]]+\] \[[^\]]+\] [^ ]+ \d+ [^ ]+ (?P<status>\d+)`
-    
-    regex, err := regexp.Compile(accessPattern)
-    if err != nil {
-        log.Printf("Error compiling regex pattern: %v", err)
-        return nil
-    }
-
     return &LogParser{
-        accessPattern: regex,
-        lineCount:    0,
-        sampleRate:   1,
-        metrics:      metrics,
+        accessPattern: accessPattern,
+        metrics:      NewMetricsCollector(),
     }
 }
 
 func (p *LogParser) ParseLine(line string) {
-    log.Printf("Parsing line: %s", line) // Debug log
-    
-    p.lineCount++
-    if p.sampleRate > 1 && p.lineCount%p.sampleRate != 0 {
-        return
-    }
-
-    if len(line) > 0 && (line[0] == 'I' || line[0] == 'W' || line[0] == 'E' || line[0] == 'F') {
-        return
-    }
-
     matches := p.accessPattern.FindStringSubmatch(line)
     if matches == nil {
-        log.Printf("Line did not match pattern: %s", line) // Debug log
+        log.Printf("Line did not match pattern: %s", line)
         return
     }
 
-    values := make(map[string]string)
-    for i, name := range p.accessPattern.SubexpNames() {
-        if i > 0 && i < len(matches) && name != "" {
-            values[name] = matches[i]
-        }
-    }
+    // The matches should now contain:
+    // matches[1] = sourceIP (5.134.48.221)
+    // matches[2] = host (https://api-hyncmh.develop.dcmapis.com)
+    // matches[3] = timestamp (19/Mar/2025:14:05:03 +0000)
+    // matches[4] = method (POST)
+    // matches[5] = path (/api/v1/test/request/id)
+    // matches[6] = status (404)
 
-    method, ok1 := values["method"]
-    path, ok2 := values["path"]
-    status, ok3 := values["status"]
-    sourceIP, ok4 := values["remote_addr"]
-    host := values["host"]
+    sourceIP := matches[1]
+    host := strings.TrimPrefix(matches[2], "https://")
+    host = strings.TrimPrefix(host, "http://")
+    method := matches[4]
+    path := matches[5]
+    status := matches[6]
 
-    if !ok1 || !ok2 || !ok3 || !ok4 {
-        return
-    }
-
-    cleanPath := path
-    if idx := strings.Index(path, "?"); idx != -1 {
-        cleanPath = path[:idx]
-    }
-
-    key := fmt.Sprintf("%s_%s_%s_%s_%s", 
-        method, cleanPath, host, status, sourceIP)
+    // Create a unique key for this request
+    key := fmt.Sprintf("%s_%s_%s_%s_%s", method, path, host, status, sourceIP)
 
     p.metrics.mutex.Lock()
     defer p.metrics.mutex.Unlock()
-    
-    p.metrics.requestCount[key]++
-    count := p.metrics.requestCount[key]
 
-    p.metrics.requestsTotal.WithLabelValues(
-        method,
-        cleanPath,
-        host,
-        status,
-        sourceIP,
-    ).Inc()
+    // Update the count in the map
+    p.metrics.requestCount[key]++
+
+    // Increment the Prometheus counter
+    p.metrics.requestsTotal.WithLabelValues(method, path, host, status, sourceIP).Inc()
 
     log.Printf("Updated metric - method=%s, path=%s, host=%s, status=%s, sourceIP=%s, count=%.0f",
-        method, cleanPath, host, status, sourceIP, count)
+        method, path, host, status, sourceIP, p.metrics.requestCount[key])
 }
 
 func NewK8sClient() (*kubernetes.Clientset, error) {
