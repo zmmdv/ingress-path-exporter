@@ -65,23 +65,37 @@ type LogCollector struct {
 
 // Initialize metrics when creating a new parser instead of init()
 func NewLogParser() *LogParser {
-    // Create or get the metrics collector
     metrics := NewMetricsCollector()
-    
-    // Register metrics only if they haven't been registered
     prometheus.DefaultRegisterer.MustRegister(metrics.requestsTotal)
 
-    // Updated pattern to match the exact log format
-    accessPattern := `^(?P<remote_addr>[^ ]+) "(?P<host>[^"]+)" "[^"]*" "[^"]*"\[(?P<timestamp>[^\]]+)\] "(?P<method>[^ ]+) (?P<path>[^ ]+)[^"]+" - \d+ - (?P<user_agent>[^ ]+) \d+ [^ ]+ \[[^\]]+\] \[[^\]]+\] [^ ]+ \d+ [^ ]+ (?P<status>\d+)`
-    
-    regex, err := regexp.Compile(accessPattern)
+    // Pattern based on the exact nginx log format
+    pattern := `^(?P<remote_addr>[^ ]+) ` + // $remote_addr
+        `"https://(?P<host>[^"]+)" ` + // "https://$host"
+        `"OAK: [^"]+" ` + // "OAK: $sent_http_oak"
+        `"Requests status: (?P<initial_status>[^"]+)"` + // "Requests status: $status"
+        `\[(?P<time_local>[^\]]+)\] ` + // [$time_local]
+        `"(?P<method>[^ ]+) (?P<path>[^ ]+)[^"]+" ` + // "$request"
+        `(?P<remote_user>[^ ]+) ` + // $remote_user
+        `(?P<body_bytes_sent>\d+) ` + // $body_bytes_sent
+        `(?P<http_referer>[^ ]+) ` + // $http_referer
+        `(?P<http_user_agent>[^ ]+) ` + // $http_user_agent
+        `(?P<request_length>\d+) ` + // $request_length
+        `(?P<request_time>[^ ]+) ` + // $request_time
+        `\[(?P<proxy_upstream_name>[^\]]*)\] ` + // [$proxy_upstream_name]
+        `\[(?P<proxy_alternative_upstream_name>[^\]]*)\] ` + // [$proxy_alternative_upstream_name]
+        `(?P<upstream_addr>[^ ]+) ` + // $upstream_addr
+        `(?P<upstream_response_length>\d+) ` + // $upstream_response_length
+        `(?P<upstream_response_time>[^ ]+) ` + // $upstream_response_time
+        `(?P<status>\d+) ` + // $upstream_status
+        `(?P<req_id>[a-f0-9]+)$` // $req_id
+
+    regex, err := regexp.Compile(pattern)
     if err != nil {
         log.Printf("Error compiling regex pattern: %v", err)
         return nil
     }
 
-    // Add debug logging for the pattern
-    log.Printf("Compiled regex pattern: %s", accessPattern)
+    log.Printf("Compiled regex pattern: %s", pattern)
 
     return &LogParser{
         accessPattern: regex,
@@ -131,25 +145,21 @@ func (p *LogParser) ParseLine(line string) {
 
     matches := p.accessPattern.FindStringSubmatch(line)
     if matches == nil {
-        // Add more detailed debug logging
-        log.Printf("No matches found. Pattern parts check:")
-        log.Printf("IP check: %v", strings.HasPrefix(line, "5.134.48.221"))
-        log.Printf("Host check: %v", strings.Contains(line, "\"https://api-hyncmh.develop.dcmapis.com\""))
+        log.Printf("No matches found for line: %s", line)
         return
     }
 
     // Create a map to store our extracted values
     values := make(map[string]string)
     
-    // Extract all named groups with debug logging
+    // Extract all named groups
     for i, name := range p.accessPattern.SubexpNames() {
         if i > 0 && i < len(matches) && name != "" {
             values[name] = matches[i]
-            log.Printf("Extracted %s: %s", name, matches[i])
         }
     }
 
-    // Extract and validate required fields
+    // Extract required fields
     method, ok1 := values["method"]
     path, ok2 := values["path"]
     status, ok3 := values["status"]
@@ -168,19 +178,17 @@ func (p *LogParser) ParseLine(line string) {
         cleanPath = path[:idx]
     }
 
-    // Clean the host
-    host = strings.TrimPrefix(host, "https://")
-    host = strings.TrimPrefix(host, "http://")
-
+    // Clean the host (already clean as we capture without https:// prefix)
     if host == "" {
         host = "unknown"
     }
 
-    // Debug log
-    log.Printf("Successfully parsed: method=%s, path=%s, host=%s, status=%s, sourceIP=%s",
-        method, cleanPath, host, status, sourceIP)
+    // Add detailed metrics logging
+    log.Printf("Recording metric - method=%s, path=%s, host=%s, status=%s, sourceIP=%s, upstream=%s, requestTime=%s",
+        method, cleanPath, host, status, sourceIP, 
+        values["proxy_upstream_name"], values["request_time"])
 
-    // Use metrics from the parser instance
+    // Increment the counter
     p.metrics.requestsTotal.WithLabelValues(
         method,
         cleanPath,
