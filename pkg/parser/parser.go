@@ -71,14 +71,17 @@ func NewLogParser() *LogParser {
     // Register metrics only if they haven't been registered
     prometheus.DefaultRegisterer.MustRegister(metrics.requestsTotal)
 
-    // Updated pattern to match new log format
-    accessPattern := `^(?P<remote_addr>[^ ]+) "(?P<host>[^"]+)" "[^"]*" "[^"]*"\[(?P<timestamp>[^\]]+)\] "(?P<method>[^ ]+) (?P<path>[^"]+) [^"]+" [^ ]+ (?P<bytes>\d+) [^ ]+ (?P<user_agent>[^"]+) \d+ [^ ]+ \[[^\]]+\] \[[^\]]+\] [^ ]+ \d+ [^ ]+ (?P<status>\d+)`
+    // Updated pattern to match the exact log format
+    accessPattern := `^(?P<remote_addr>[^ ]+) "(?P<host>[^"]+)" "[^"]*" "[^"]*"\[(?P<timestamp>[^\]]+)\] "(?P<method>[^ ]+) (?P<path>[^ ]+)[^"]+" - \d+ - (?P<user_agent>[^ ]+) \d+ [^ ]+ \[[^\]]+\] \[[^\]]+\] [^ ]+ \d+ [^ ]+ (?P<status>\d+)`
     
     regex, err := regexp.Compile(accessPattern)
     if err != nil {
         log.Printf("Error compiling regex pattern: %v", err)
         return nil
     }
+
+    // Add debug logging for the pattern
+    log.Printf("Compiled regex pattern: %s", accessPattern)
 
     return &LogParser{
         accessPattern: regex,
@@ -128,17 +131,21 @@ func (p *LogParser) ParseLine(line string) {
 
     matches := p.accessPattern.FindStringSubmatch(line)
     if matches == nil {
-        log.Printf("No matches found for line: %s", line)
+        // Add more detailed debug logging
+        log.Printf("No matches found. Pattern parts check:")
+        log.Printf("IP check: %v", strings.HasPrefix(line, "5.134.48.221"))
+        log.Printf("Host check: %v", strings.Contains(line, "\"https://api-hyncmh.develop.dcmapis.com\""))
         return
     }
 
     // Create a map to store our extracted values
     values := make(map[string]string)
     
-    // Extract all named groups
+    // Extract all named groups with debug logging
     for i, name := range p.accessPattern.SubexpNames() {
         if i > 0 && i < len(matches) && name != "" {
             values[name] = matches[i]
+            log.Printf("Extracted %s: %s", name, matches[i])
         }
     }
 
@@ -147,10 +154,11 @@ func (p *LogParser) ParseLine(line string) {
     path, ok2 := values["path"]
     status, ok3 := values["status"]
     sourceIP, ok4 := values["remote_addr"]
-    host := values["host"] // Now directly available from the log
+    host := values["host"]
 
     if !ok1 || !ok2 || !ok3 || !ok4 {
-        log.Printf("Missing required fields in log line")
+        log.Printf("Missing required fields: method=%v, path=%v, status=%v, sourceIP=%v",
+            ok1, ok2, ok3, ok4)
         return
     }
 
@@ -160,17 +168,16 @@ func (p *LogParser) ParseLine(line string) {
         cleanPath = path[:idx]
     }
 
-    // If host is empty, use "unknown"
+    // Clean the host
+    host = strings.TrimPrefix(host, "https://")
+    host = strings.TrimPrefix(host, "http://")
+
     if host == "" {
         host = "unknown"
     }
 
-    // Remove any protocol prefix from host
-    host = strings.TrimPrefix(host, "https://")
-    host = strings.TrimPrefix(host, "http://")
-
     // Debug log
-    log.Printf("Parsed log entry: method=%s, path=%s, host=%s, status=%s, sourceIP=%s",
+    log.Printf("Successfully parsed: method=%s, path=%s, host=%s, status=%s, sourceIP=%s",
         method, cleanPath, host, status, sourceIP)
 
     // Use metrics from the parser instance
