@@ -71,8 +71,8 @@ func NewLogParser() *LogParser {
     // Register metrics only if they haven't been registered
     prometheus.DefaultRegisterer.MustRegister(metrics.requestsTotal)
 
-    // Create and compile regex pattern
-    accessPattern := `^(?P<remote_addr>[^ ]+) [^ ]+ [^ ]+ \[(?P<timestamp>[^\]]+)\] "(?P<method>[^ ]+) (?P<path>[^ ]+) HTTP/[^"]+" (?P<status>\d+) (?P<bytes>\d+) "(?P<referrer>[^"]*)" "(?P<user_agent>[^"]*)".*$`
+    // Updated pattern to match new log format
+    accessPattern := `^(?P<remote_addr>[^ ]+) "(?P<host>[^"]+)" "[^"]*" "[^"]*"\[(?P<timestamp>[^\]]+)\] "(?P<method>[^ ]+) (?P<path>[^"]+) [^"]+" [^ ]+ (?P<bytes>\d+) [^ ]+ (?P<user_agent>[^"]+) \d+ [^ ]+ \[[^\]]+\] \[[^\]]+\] [^ ]+ \d+ [^ ]+ (?P<status>\d+)`
     
     regex, err := regexp.Compile(accessPattern)
     if err != nil {
@@ -128,6 +128,7 @@ func (p *LogParser) ParseLine(line string) {
 
     matches := p.accessPattern.FindStringSubmatch(line)
     if matches == nil {
+        log.Printf("No matches found for line: %s", line)
         return
     }
 
@@ -146,7 +147,7 @@ func (p *LogParser) ParseLine(line string) {
     path, ok2 := values["path"]
     status, ok3 := values["status"]
     sourceIP, ok4 := values["remote_addr"]
-    referrer := values["referrer"]
+    host := values["host"] // Now directly available from the log
 
     if !ok1 || !ok2 || !ok3 || !ok4 {
         log.Printf("Missing required fields in log line")
@@ -159,11 +160,18 @@ func (p *LogParser) ParseLine(line string) {
         cleanPath = path[:idx]
     }
 
-    // Extract host from referrer
-    host := p.extractHostFromURL(referrer)
+    // If host is empty, use "unknown"
     if host == "" {
         host = "unknown"
     }
+
+    // Remove any protocol prefix from host
+    host = strings.TrimPrefix(host, "https://")
+    host = strings.TrimPrefix(host, "http://")
+
+    // Debug log
+    log.Printf("Parsed log entry: method=%s, path=%s, host=%s, status=%s, sourceIP=%s",
+        method, cleanPath, host, status, sourceIP)
 
     // Use metrics from the parser instance
     p.metrics.requestsTotal.WithLabelValues(
