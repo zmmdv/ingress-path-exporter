@@ -1,6 +1,8 @@
 package parser
 
 import (
+    "bufio"
+    "context"
     "fmt"
     "log"
     "regexp"
@@ -9,6 +11,8 @@ import (
     "time"
 
     "github.com/prometheus/client_golang/prometheus"
+    "k8s.io/api/core/v1"
+    "k8s.io/apimachinery/pkg/api/meta"
     "k8s.io/client-go/kubernetes"
     "k8s.io/client-go/rest"
 )
@@ -164,12 +168,57 @@ func NewLogCollector(client *kubernetes.Clientset, parser *LogParser, namespace 
 }
 
 func (c *LogCollector) Start() {
-    // Implementation for starting log collection
-    // This should:
-    // 1. Find nginx pods using the label selectors
-    // 2. Stream logs from those pods
-    // 3. Pass logs to the parser
-    // TODO: Implement the actual log collection logic
+    log.Printf("Starting log collector for namespace: %s", c.namespace) // Debug log
+    
+    for {
+        select {
+        case <-c.stopChan:
+            log.Println("Stopping log collector")
+            return
+        default:
+            pods, err := c.client.CoreV1().Pods(c.namespace).List(context.Background(), metav1.ListOptions{
+                LabelSelector: strings.Join(c.labelSelectors, ","),
+            })
+            if err != nil {
+                log.Printf("Error listing pods: %v", err)
+                time.Sleep(5 * time.Second)
+                continue
+            }
+            
+            log.Printf("Found %d pods matching selectors", len(pods.Items)) // Debug log
+            
+            for _, pod := range pods.Items {
+                go c.streamPodLogs(&pod)
+            }
+            
+            // Wait before checking for new pods
+            time.Sleep(30 * time.Second)
+        }
+    }
+}
+
+func (c *LogCollector) streamPodLogs(pod *corev1.Pod) {
+    req := c.client.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+        Follow: true,
+    })
+    
+    stream, err := req.Stream(context.Background())
+    if err != nil {
+        log.Printf("Error getting log stream for pod %s: %v", pod.Name, err)
+        return
+    }
+    defer stream.Close()
+    
+    log.Printf("Started streaming logs from pod: %s", pod.Name) // Debug log
+    
+    scanner := bufio.NewScanner(stream)
+    for scanner.Scan() {
+        c.parser.ParseLine(scanner.Text())
+    }
+    
+    if err := scanner.Err(); err != nil {
+        log.Printf("Error reading log stream for pod %s: %v", pod.Name, err)
+    }
 }
 
 func (c *LogCollector) Stop() {
