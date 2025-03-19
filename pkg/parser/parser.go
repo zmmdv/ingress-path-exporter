@@ -129,4 +129,39 @@ func NewK8sClient() (*kubernetes.Clientset, error) {
     }
 
     return clientset, nil
+}
+
+func (p *LogParser) SetSampleRate(rate int) {
+    p.sampleRate = rate
+}
+
+type LogCollector struct {
+    client         *kubernetes.Clientset
+    parser         *LogParser
+    namespace      string
+    labelSelectors []string
+    stopChan       chan struct{}
+}
+
+func NewLogCollector(client *kubernetes.Clientset, parser *LogParser, namespace string, labelSelectors []string) *LogCollector {
+    return &LogCollector{
+        client:         client,
+        parser:         parser,
+        namespace:      namespace,
+        labelSelectors: labelSelectors,
+        stopChan:       make(chan struct{}),
+    }
+}
+
+func (c *LogCollector) Start() {
+    // Implementation for starting log collection
+    // This should:
+    // 1. Find nginx pods using the label selectors
+    // 2. Stream logs from those pods
+    // 3. Pass logs to the parser
+    // TODO: Implement the actual log collection logic
+}
+
+func (c *LogCollector) Stop() {
+    close(c.stopChan)
 } 
