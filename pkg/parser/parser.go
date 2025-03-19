@@ -68,8 +68,8 @@ func NewMetricsCollector() *MetricsCollector {
 }
 
 func NewLogParser() *LogParser {
-    // Simplified regex pattern to match your log format
-    accessPattern := regexp.MustCompile(`^(\S+)\s+"([^"]+)"\s+"[^"]+"\s+"[^"]+".*?"(\w+)\s+([^"]+)\s+HTTP/[0-9.]+"\s+.*?(\d{3})\s+[a-f0-9]+$`)
+    // Updated pattern to handle the timestamp prefix and exact log format
+    accessPattern := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d+Z\s+(\S+)\s+"([^"]+)"\s+"[^"]+"\s+"[^"]+"\[([^\]]+)\]\s+"(\w+)\s+([^"]+)\s+HTTP/[0-9.]+"\s+.*?\s+(\d{3})\s+[a-f0-9]+$`)
     
     return &LogParser{
         accessPattern: accessPattern,
@@ -88,25 +88,26 @@ func (p *LogParser) ParseLine(line string) {
 
     log.Printf("✅ Found matches: %#v", matches)
 
-    // matches should contain:
+    // matches should now contain:
     // [0] - full match
-    // [1] - sourceIP
-    // [2] - host
-    // [3] - method
-    // [4] - path
-    // [5] - status
+    // [1] - sourceIP (5.134.48.221)
+    // [2] - host (https://api-hyncmh.develop.dcmapis.com)
+    // [3] - timestamp from brackets
+    // [4] - method (POST)
+    // [5] - path (/api/v1/test/request/id)
+    // [6] - status (404)
 
-    if len(matches) != 6 {
-        log.Printf("❌ Wrong number of matches. Expected 6, got %d", len(matches))
+    if len(matches) != 7 {
+        log.Printf("❌ Wrong number of matches. Expected 7, got %d", len(matches))
         return
     }
 
     sourceIP := matches[1]
     host := strings.TrimPrefix(matches[2], "https://")
     host = strings.TrimPrefix(host, "http://")
-    method := matches[3]
-    path := matches[4]
-    status := matches[5]
+    method := matches[4]
+    path := matches[5]
+    status := matches[6]
 
     log.Printf("📊 Parsed values: sourceIP=%s, host=%s, method=%s, path=%s, status=%s",
         sourceIP, host, method, path, status)
